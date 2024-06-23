@@ -174,25 +174,25 @@
 </template>
 
 <script>
-import {forEach, map, filter, find} from '../../collections';
+import {forEach, map, filter} from '../../collections';
 
 import '../../typedef';
 
 import myMath from '../../myMath';
-import {defaultItem, traverseItems, hasItemDescription, traverseItemsConditionally} from '../../scheme/Item';
+import {defaultItem, traverseItems, traverseItemsConditionally} from '../../scheme/Item';
 import {enrichItemWithDefaults} from '../../scheme/ItemFixer';
 import ItemSvg from './items/ItemSvg.vue';
 import linkTypes from './LinkTypes.js';
 import utils from '../../utils.js';
 import SchemeContainer  from '../../scheme/SchemeContainer.js';
-import { getBoundingBoxOfItems, itemCompleteTransform, worldPointOnItem, worldScalingVectorOnItem } from '../../scheme/ItemMath.js';
+import { getBoundingBoxOfItems, itemCompleteTransform, worldAngleOfItem, worldPointOnItem, worldScalingVectorOnItem, worldVectorOnItem } from '../../scheme/ItemMath.js';
 import Compiler from '../../userevents/Compiler.js';
 import Shape from './items/shapes/Shape';
 import {playInAnimationRegistry} from '../../animations/AnimationRegistry';
 import ValueAnimation from '../../animations/ValueAnimation';
 import Events from '../../userevents/Events';
 import StoreUtils from '../../store/StoreUtils';
-import { COMPONENT_LOADED_EVENT, COMPONENT_FAILED, calculateComponentButtonArea } from './items/shapes/Component.vue';
+import { COMPONENT_LOADED_EVENT, COMPONENT_FAILED } from './items/shapes/Component.vue';
 import EditorEventBus from './EditorEventBus';
 import { collectAndLoadAllMissingShapes } from './items/shapes/ExtraShapes.js';
 import {ObjectTypes} from './ObjectTypes';
@@ -318,6 +318,7 @@ export default {
             mouseEventsEnabled: !(this.mode === 'view' && this.textSelectionEnabled),
             linkPalette: ['#ec4b4b', '#bd4bec', '#4badec', '#226D18', '#6A590E', '#0F8989', '#7B245B'],
 
+            rotation: 0,
 
             lastClickPoint: null,
             // setting last click time to -1000 as performance.now() returns 0 when the page just loaded
@@ -431,7 +432,26 @@ export default {
                 // (e.g. in item selector componnent) and click 'zoom to it'
                 filteredItems = items;
             }
-            return getBoundingBoxOfItems(filteredItems);
+
+            if (filteredItems.length === 1) {
+                // filteredItems
+                const item = filteredItems[0];
+                const Vw = worldVectorOnItem(item.area.w, 0, item);
+                const Vh = worldVectorOnItem(0, item.area.h, item);
+                const w = myMath.vectorLength(Vw.x, Vw.y);
+                const h = myMath.vectorLength(Vh.x, Vh.y);
+                const p = worldPointOnItem(0, 0, item);
+                return {
+                    x: p.x,
+                    y: p.y,
+                    r: -worldAngleOfItem(item),
+                    w,
+                    h,
+                };
+            }
+            const box = getBoundingBoxOfItems(filteredItems);
+            box.r = 0;
+            return box;
         },
 
         updateSvgSize() {
@@ -928,6 +948,9 @@ export default {
             const destX = this.width/2 - (area.x + area.w/2) * newZoom;
             const destY = (this.height)/2 - (area.y + area.h/2) * newZoom;
 
+            const oldRotation = this.rotation;
+            const dstRotation = area.r;
+
             if (animated) {
                 playInAnimationRegistry(this.editorId, new ValueAnimation({
                     durationMillis: 400,
@@ -936,6 +959,7 @@ export default {
                         this.schemeContainer.screenTransform.scale = (oldZoom * (1.0 - t) + newZoom * t);
                         this.schemeContainer.screenTransform.x = oldX * (1.0 - t) + destX * t;
                         this.schemeContainer.screenTransform.y = oldY * (1.0 - t) + destY * t;
+                        this.rotation = oldRotation * (1.0 - t) + dstRotation * t;
                     },
                     destroy: () => {
                         this.informUpdateOfScreenTransform(this.schemeContainer.screenTransform);
@@ -945,6 +969,7 @@ export default {
                 this.schemeContainer.screenTransform.scale = newZoom;
                 this.schemeContainer.screenTransform.x = destX;
                 this.schemeContainer.screenTransform.y = destY;
+                this.rotation = area.r;
                 this.informUpdateOfScreenTransform(this.schemeContainer.screenTransform);
             }
         },
@@ -1293,7 +1318,7 @@ export default {
             const x = Math.floor(this.schemeContainer.screenTransform.x || 0);
             const y = Math.floor(this.schemeContainer.screenTransform.y || 0);
             const scale = this.schemeContainer.screenTransform.scale || 1.0;
-            return `translate(${x} ${y}) scale(${scale} ${scale})`;
+            return `translate(${x} ${y}) rotate(${this.rotation}) scale(${scale} ${scale})`;
         },
         gridStep() {
             const snapSize = myMath.getSnappingWidthForScale(this.schemeContainer.screenTransform.scale);
